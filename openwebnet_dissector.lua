@@ -1,19 +1,25 @@
 -- cmd aren't actually openwebnet commands, but are used to identify the type of message
 local cmd = {
     [1] = "OPEN_SESSION",
-    [2] = "NONCE",
-    [3] = "PASSWORD",
-    [4] = "ACK",
-    [5] = "NACK",
-    [6] = "NORMAL",
-    [7] = "STATUS_REQUEST",
-    [8] = "DIMENSION_REQUEST",
-    [9] = "DIMENSION_WRITING"
+    [2] = "HMAC",
+    [3] = "NONCE",
+    [4] = "PASSWORD",
+    [5] = "ACK",
+    [6] = "NACK",
+    [7] = "NORMAL",
+    [8] = "STATUS_REQUEST",
+    [9] = "DIMENSION_REQUEST",
+    [10] = "DIMENSION_WRITING"
 }
 
 local session = {
     [0] = "COMMAND_SESSION",
     [1] = "EVENT_SESSION"
+}
+
+local auth_type = {
+    [1] = "SHA1",
+    [2] = "SHA256"
 }
 
 -- from documentation
@@ -25,9 +31,12 @@ local who = {
     [4] = "Temperature Control",
     [5] = "Alarm",
     [6] = "VDES",
+    [7] = "Video Door Entry System/multimedia",
+    [9] = "Auxiliary",
     [13] = "Gateway Management",
-    [14] = "Lighting",
+    [14] = "Light+shutters actuators lock",
     [15] = "CEN commands",
+    [16] = "Sound System/Audio",
     [17] = "MH200N scenarios",
     [18] = "Energy management",
     [22] = "Sound diffusion",
@@ -35,7 +44,7 @@ local who = {
     [25] = "CEN plus / scenarios plus / dry contacts",
     [1001] = "Automation diagnostic",
     [1004] = "Thermoregulation diagnostic",
-    [1013] = "Device diagnostic",
+    [1013] = "Device diagnostic"
 }
 
 
@@ -45,14 +54,20 @@ local f = own.fields
 f.msg = ProtoField.string("own.msg", "Message")
 f.cmd = ProtoField.uint8("own.cmd", "Command", base.HEX, cmd)
 f.session = ProtoField.uint8("own.session", "Session Type", base.DEC, session)
+f.auth_type = ProtoField.uint8("own.auth_type", "Auth Type", base.DEC, auth_type)
+f.nonce = ProtoField.uint16("own.nonce", "Nonce", base.DEC)
+f.password = ProtoField.uint16("own.password", "Password", base.DEC)
+
 f.who = ProtoField.uint16("own.who", "Who", base.DEC, who)
 f.what = ProtoField.string("own.what", "What")
 f.where = ProtoField.string("own.where", "Where")
 f.dimension = ProtoField.string("own.dimension", "Dimension")
+
 f.values = ProtoField.string("own.value", "Values")
 f.value = ProtoField.string("own.value", "Value")
-f.nonce = ProtoField.uint16("own.nonce", "Nonce")
-f.password = ProtoField.uint16("own.password", "Password")
+f.tag = ProtoField.uint8("own.tag", "Tag", base.DEC)
+f.param = ProtoField.uint8("own.param", "Param", base.DEC)
+
 
 function own.dissector(buffer, pkt_info, root_tree)
     if buffer:len() < 4 then return end
@@ -65,111 +80,136 @@ function own.dissector(buffer, pkt_info, root_tree)
     local prev_i = 0
     local i = 0
     while true do
-      _, i = string.find(payload, "##", i+1)
-      if i == nil then break end
+        _, i = string.find(payload, "##", i+1)
+        if i == nil then break end
 
-      msg = buffer(prev_i, i-prev_i):string()
-      prev_i = i
-      msg_tree = main_tree:add(f.msg, msg)
-    dissect_message(msg, pkt_info, msg_tree)
+        msg = buffer(prev_i, i-prev_i):string()
+        prev_i = i
+        msg_tree = main_tree:add(f.msg, msg)
+        dissect_message(msg, pkt_info, msg_tree)
     end
 end
 
 function dissect_message(msg, pkt_info, main_tree)
-    if m_open_cmd(msg) then
-        pkt_info.cols.info = cmd[1]
+    if m_open_session(msg) then
         main_tree:add(f.cmd, 1)
-        main_tree:add(f.session, 0)
-    elseif m_open_event(msg) then
-        pkt_info.cols.info = cmd[1]
-        main_tree:add(f.cmd, 1)
-        main_tree:add(f.session, 1)
+
+        local type = string.match(msg, "^[*]99[*](%d)##")
+        main_tree:add(f.session, tonumber(type))
+    elseif m_rqt_hmac(msg) then
+        main_tree:add(f.cmd, 2)
+
+        local type = string.match(msg, "^[*]98[*](%d)##")
+        main_tree:add(f.auth_type, tonumber(type))
     elseif m_nonce(msg) then
         local nonce = string.match(msg, "%d+")
 
         if pkt_info.src_port == 20000 then
-            pkt_info.cols.info = cmd[2]
-            main_tree:add(f.cmd, 2)
+            main_tree:add(f.cmd, 3)
             main_tree:add(f.nonce, tonumber(nonce))
         else
-            pkt_info.cols.info = cmd[3]
-            main_tree:add(f.cmd, 3)
+            main_tree:add(f.cmd, 4)
             main_tree:add(f.password, tonumber(nonce))
         end        
     elseif m_ack(msg) then
-        pkt_info.cols.info = cmd[4]
-        main_tree:add(f.cmd, 4)
-    elseif m_nack(msg) then
-        pkt_info.cols.info = cmd[5]
         main_tree:add(f.cmd, 5)
-    elseif m_norm(msg) then
-        pkt_info.cols.info = cmd[6]
+    elseif m_nack(msg) then
         main_tree:add(f.cmd, 6)
-
-        local t = parse_message(msg)
-        main_tree:add(f.who, t[1])
-        main_tree:add(f.what, t[2])
-        main_tree:add(f.where, t[3])
-    elseif m_sts(msg) then
-        pkt_info.cols.info = cmd[7]
+    elseif m_norm(msg) then
         main_tree:add(f.cmd, 7)
 
         local t = parse_message(msg)
         main_tree:add(f.who, t[1])
-        main_tree:add(f.where, t[2])
-    elseif m_dim_req(msg) then
-        pkt_info.cols.info = cmd[8]
+        parse_what(t[2], main_tree)
+        parse_where(t[3], main_tree)
+    elseif m_sts(msg) then
         main_tree:add(f.cmd, 8)
+
+        local t = parse_message(msg)
+        main_tree:add(f.who, t[1])
+        parse_where(t[3], main_tree)
+    elseif m_dim_req(msg) then
+        main_tree:add(f.cmd,9)
         local t = parse_message(msg)
 
         main_tree:add(f.who, t[1])
-        main_tree:add(f.where, t[2])
+        parse_where(t[3], main_tree)
         main_tree:add(f.dimension, t[3])
     elseif m_dim_wtr(msg) then
-        pkt_info.cols.info = cmd[9]
-        main_tree:add(f.cmd, 9)
+        main_tree:add(f.cmd, 10)
         local t = parse_message(msg)
 
         main_tree:add(f.who, t[1])
-        main_tree:add(f.where, t[2])
+        parse_where(t[3], main_tree)
         main_tree:add(f.dimension, t[3])
-        values = main_tree:add(f.values, "")
-        for i = 4, #t do
-            values:add(f.value, t[i])
+        parse_values(t, main_tree)
+    end
+end
+
+function parse_values(table, tree)
+    local field = ""
+    for i, value in ipairs(table) do
+        if i > 3 then
+            field = field .. "*".. value
         end
-    else
-        return
+    end
+
+    local values = tree:add(f.values, field)
+    for i, value in ipairs(table) do
+        if i > 3 then
+            values:add(f.value, value)
+        end
     end
 end
 
-function split(inputstr, sep)
-    if sep == nil then
-            sep = "%s"
-    end
 
-    local t = {}
-    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
-        table.insert(t, str)
-    end
+function parse_where(field, tree)
+    local t = parse_params(field)
+    local where_tree = tree:add(f.where, field)
 
-    return t
+    if t[1] ~= nil then
+        where_tree:add(f.tag, t[1])
+    end
+    
+    for i, value in ipairs(t) do
+        if i ~= 1 then
+            where_tree:add(f.param, value)
+        end
+    end
 end
 
-function parse_string(str, pattern)
-    str = str:sub(1, -2)
-    str = str:sub(1, -2)
+function parse_what(field, tree)
+    local t = parse_params(field)
+    local what_tree = tree:add(f.what, field)
 
-    local t = {}
-    for str in string.gmatch(str, pattern) do
-        table.insert(t, str)
+    if t[1] ~= nil then
+        what_tree:add(f.tag, t[1])
     end
+    
+    for i, value in ipairs(t) do
+        if i ~= 1 then
+            what_tree:add(f.param, value)
+        end
+    end
+end
+
+function parse_params(field)
+    local t = {}
+    t[1] = string.match(field, "^([0-9]*)")
+
+    for str in string.gmatch(field, "#([0-9]*)") do
+        if str:len() > 0 then
+            table.insert(t, tonumber(str))
+        end
+    end
+
     return t
 end
 
 function parse_message(msg)
     local t = {}
     local i = 0
-    for str in string.gmatch(msg, "([*][a-zA-Z0-9#]*)") do
+    for str in string.gmatch(msg, "([*][0-9#]*)") do
         if str:len() > 0 then
             if i == 0 then
                 local p = string.match(str, "[*]#?(%d*)")
@@ -190,8 +230,8 @@ function parse_message(msg)
     return t
 end
 
-function m_open_cmd(string)
-    local str = string:match("^[*]99[*]0##")
+function m_open_session(string)
+    local str = string:match("^[*]99[*]%d##")
     if str then
         return true
     else
@@ -199,8 +239,8 @@ function m_open_cmd(string)
     end
 end
 
-function m_open_event(string)
-    local str = string:match("^[*]99[*]1##")
+function m_rqt_hmac(string)
+    local str = string:match("^[*]98[*]%d##")
     if str then
         return true
     else
@@ -216,7 +256,6 @@ function m_nonce(string)
         return false
     end
 end
-
 
 function m_ack(string)
     local str = string:match("^[*]#[*]1##")
