@@ -1,6 +1,8 @@
 # openwebnet-dissector
 A wireshark dissector for the OpenWebNet protocol
 
+![Drag Racing](screenshot/01.png)
+
 ## Documentation
 Here you find the documentation for the OpenWebNet protocol
 - [Main](https://developer.legrand.com/documentation/open-web-net-for-myhome/)
