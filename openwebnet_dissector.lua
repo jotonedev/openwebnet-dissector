@@ -127,21 +127,21 @@ function dissect_message(msg, pkt_info, main_tree)
 
         local t = parse_message(msg)
         main_tree:add(f.who, t[1])
-        parse_where(t[3], main_tree)
+        parse_where(t[2], main_tree)
     elseif m_dim_req(msg) then
         main_tree:add(f.cmd,9)
         local t = parse_message(msg)
 
         main_tree:add(f.who, t[1])
-        parse_where(t[3], main_tree)
+        parse_where(t[2], main_tree)
         main_tree:add(f.dimension, t[3])
     elseif m_dim_wtr(msg) then
         main_tree:add(f.cmd, 10)
         local t = parse_message(msg)
 
         main_tree:add(f.who, t[1])
-        parse_where(t[3], main_tree)
-        main_tree:add(f.dimension, t[3])
+        parse_where(t[2], main_tree)
+        parse_dimension(t[3], main_tree)
         parse_values(t, main_tree)
     end
 end
@@ -150,7 +150,11 @@ function parse_values(table, tree)
     local field = ""
     for i, value in ipairs(table) do
         if i > 3 then
-            field = field .. "*".. value
+            if i == 4 then
+                field = value
+            else
+                field = field .. "*".. value
+            end
         end
     end
 
@@ -164,46 +168,72 @@ end
 
 
 function parse_where(field, tree)
+    if field == nil or field == "" then return end
+
     local t = parse_params(field)
     local where_tree = tree:add(f.where, field)
 
-    if t[1] ~= nil then
+    if tag then
         where_tree:add(f.tag, t[1])
     end
     
     for i, value in ipairs(t) do
-        if i ~= 1 then
+        if i ~= 1 or tag ~= true then
             where_tree:add(f.param, value)
         end
     end
 end
 
 function parse_what(field, tree)
+    if field == nil or field == "" then return end
+
     local t = parse_params(field)
     local what_tree = tree:add(f.what, field)
 
-    if t[1] ~= nil then
+    if tag then
         what_tree:add(f.tag, t[1])
     end
     
     for i, value in ipairs(t) do
-        if i ~= 1 then
+        if i ~= 1 or tag ~= true then
             what_tree:add(f.param, value)
+        end
+    end
+end
+
+function parse_dimension(field, tree)
+    if field == nil or field == "" then return end
+
+    t, tag = parse_params(field)
+    local dim_tree = tree:add(f.dimension, field)
+
+    if tag then
+        dim_tree:add(f.tag, t[1])
+    end
+    
+    for i, value in ipairs(t) do
+        if i ~= 1 or tag ~= true then
+            dim_tree:add(f.param, value)
         end
     end
 end
 
 function parse_params(field)
     local t = {}
-    t[1] = string.match(field, "^([0-9]*)")
+    local tag = false
+    
+    t[1] = tonumber(string.match(field, "^([0-9]*)"))
+    if t[1] ~= nil then
+        tag = true
+    end
 
     for str in string.gmatch(field, "#([0-9]*)") do
-        if str:len() > 0 then
+        if str:len() > 0 and str ~= nil then
             table.insert(t, tonumber(str))
         end
     end
 
-    return t
+    return t, tag
 end
 
 function parse_message(msg)
