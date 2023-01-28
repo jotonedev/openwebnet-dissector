@@ -1,7 +1,8 @@
 # openwebnet-dissector
 A wireshark dissector for the OpenWebNet protocol
+[Blog post](https://jotone.eu/post/230128)
 
-![Drag Racing](screenshot/01.png)
+![screenshot](screenshot/01.png)
 
 ## Documentation
 Here you find the documentation for the OpenWebNet protocol
